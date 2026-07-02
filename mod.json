@@ -4,8 +4,8 @@
         "win": "2.2081"
     },
     "id": "john119.list-sync",
-    "name": "List Sync",
-    "version": "v1.3.0",
+    "name": "DLL GD Test",
+    "version": "v1.3.1",
     "developer": "john119",
     "description": "Logs your GD completions to your Dynamic List account.",
     "tags": ["online"],
