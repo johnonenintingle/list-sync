@@ -648,17 +648,15 @@ static void openRankFlow(GJGameLevel* level) {
         }
 
         Loader::get()->queueInMainThread([lid, name, uid, ranked, already]() {
-            if (already) {
-                Notification::create(
-                    fmt::format("Already #{} in your ranking", already),
-                    NotificationIcon::Warning)->show();
-                return;
-            }
-            if (ranked.empty()) {
+            // already placed -> re-rank: pull it out of its old spot and run
+            // the compare again, everything else keeps its relative order
+            auto list = ranked;
+            if (already) list.erase(list.begin() + (already - 1));
+            if (list.empty()) {
                 submitOrder(uid, { std::to_string(lid) }, 1, 1);
                 return;
             }
-            if (auto p = RankComparePopup::create(lid, name, uid, ranked)) p->show();
+            if (auto p = RankComparePopup::create(lid, name, uid, list)) p->show();
         });
     }).detach();
 }
