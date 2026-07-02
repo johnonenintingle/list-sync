@@ -5,7 +5,7 @@
     },
     "id": "john119.list-sync",
     "name": "DLL GD Test",
-    "version": "v1.3.1",
+    "version": "v1.3.2",
     "developer": "john119",
     "description": "Logs your GD completions to your Dynamic List account.",
     "tags": ["online"],

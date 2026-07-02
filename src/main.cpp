@@ -440,6 +440,13 @@ class $modify(LSMenuLayer, MenuLayer) {
 // binary search over your existing difficulty ordering: "harder or easier than
 // the middle level", ~log2(n) taps, then the whole new order is PUT in one go
 
+// the api serializes level ids as json STRINGS (postgres bigint), asInt alone
+// silently gives 0 for those. learned that one the hard way
+static long long jsonId(matjson::Value const& v) {
+    if (v.isString()) return std::atoll(v.asString().unwrapOr("0").c_str());
+    return v.asInt().unwrapOr(0);
+}
+
 static void submitOrder(int uid, std::vector<std::string> order, int pos, int total) {
     std::string url = apiBase() + "/users/" + std::to_string(uid) + "/difficulty";
     std::string token = g_token;
@@ -592,11 +599,19 @@ static void openRankFlow(GJGameLevel* level) {
         }
         std::vector<std::pair<long long, std::string>> ranked;
         int already = 0;
+        size_t serverCount = 0;
         for (auto& r : rkJson["ranked"]) {
-            long long id = r["levelId"].asInt().unwrapOr(0);
+            serverCount++;
+            long long id = jsonId(r["levelId"]);
             if (id <= 0) continue;
             if (id == lid) already = (int)ranked.size() + 1;
             ranked.push_back({ id, r["name"].asString().unwrapOr("") });
+        }
+        // if we couldnt parse everything the server sent, DO NOT touch the
+        // list - a partial order submitted as the full order erases the rest
+        if (ranked.size() != serverCount) {
+            fail("List Sync: ranking data looked wrong, not saving anything");
+            return;
         }
 
         Loader::get()->queueInMainThread([lid, name, uid, ranked, already]() {
@@ -619,8 +634,8 @@ class $modify(LSLevelInfo, LevelInfoLayer) {
     bool init(GJGameLevel* level, bool challenge) {
         if (!LevelInfoLayer::init(level, challenge)) return false;
 
-        auto spr = CircleButtonSprite::createWithSpriteFrameName(
-            "GJ_starsIcon_001.png", 1.f, CircleBaseColor::Green, CircleBaseSize::Medium);
+        auto lbl = CCLabelBMFont::create("DLL", "bigFont.fnt");
+        auto spr = CircleButtonSprite::create(lbl, CircleBaseColor::Green, CircleBaseSize::Medium);
         auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LSLevelInfo::onRank));
         btn->setID("rank-button"_spr);
 
