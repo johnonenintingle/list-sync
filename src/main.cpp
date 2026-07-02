@@ -2,6 +2,8 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/LevelSearchLayer.hpp>
+#include <Geode/modify/LevelInfoLayer.hpp>
+#include <Geode/ui/BasedButtonSprite.hpp>
 #include <Geode/binding/GJGameLevel.hpp>
 #include <Geode/binding/GameStatsManager.hpp>
 #include <Geode/binding/ButtonSprite.hpp>
@@ -432,6 +434,210 @@ class $modify(LSMenuLayer, MenuLayer) {
     void onListSync(CCObject*) {
         if (auto p = ListSyncPopup::create()) p->show();
     }
+};
+
+// ---- in game ranking via the sites binary compare ----
+// binary search over your existing difficulty ordering: "harder or easier than
+// the middle level", ~log2(n) taps, then the whole new order is PUT in one go
+
+static void submitOrder(int uid, std::vector<std::string> order, int pos, int total) {
+    std::string url = apiBase() + "/users/" + std::to_string(uid) + "/difficulty";
+    std::string token = g_token;
+    std::thread([url, token, order, pos, total]() {
+        std::vector<matjson::Value> arr(order.begin(), order.end());
+        auto body = matjson::makeObject({ {"order", arr} });
+        auto res = web::WebRequest()
+            .certVerification(false)
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + token)
+            .bodyJSON(body)
+            .timeout(std::chrono::seconds(30))
+            .putSync(url);
+        int code = res.code();
+        Loader::get()->queueInMainThread([code, pos, total]() {
+            if (code == 200) {
+                Notification::create(
+                    fmt::format("Ranked #{} of {} in your list", pos, total),
+                    NotificationIcon::Success)->show();
+            } else {
+                Notification::create(fmt::format("List Sync: rank failed (http {})", code),
+                    NotificationIcon::Error)->show();
+            }
+        });
+    }).detach();
+}
+
+class RankComparePopup : public geode::Popup {
+protected:
+    long long m_targetId = 0;
+    int m_uid = 0;
+    std::vector<std::pair<long long, std::string>> m_ranked;   // hardest first
+    int m_lo = 0;
+    int m_hi = 0;
+    CCLabelBMFont* m_vsName = nullptr;
+
+    bool init(long long targetId, std::string const& targetName, int uid,
+              std::vector<std::pair<long long, std::string>> ranked) {
+        if (!Popup::init(320.f, 190.f)) return false;
+        m_targetId = targetId;
+        m_uid = uid;
+        m_ranked = std::move(ranked);
+        m_hi = (int)m_ranked.size();
+
+        std::string title = targetName.size() > 24 ? targetName.substr(0, 22) + ".." : targetName;
+        this->setTitle("Rank: " + title);
+        auto size = m_mainLayer->getContentSize();
+        float cx = size.width / 2;
+
+        auto q = CCLabelBMFont::create("harder or easier than", "bigFont.fnt");
+        q->setScale(0.4f);
+        q->setPosition({ cx, size.height - 52 });
+        m_mainLayer->addChild(q);
+
+        m_vsName = CCLabelBMFont::create("", "goldFont.fnt");
+        m_vsName->setScale(0.75f);
+        m_vsName->setPosition({ cx, size.height - 82 });
+        m_mainLayer->addChild(m_vsName);
+
+        auto menu = CCMenu::create();
+        menu->setPosition({ 0, 0 });
+        auto harder = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Harder"), this, menu_selector(RankComparePopup::onHarder));
+        harder->setPosition({ cx - 62, 42 });
+        menu->addChild(harder);
+        auto easier = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Easier"), this, menu_selector(RankComparePopup::onEasier));
+        easier->setPosition({ cx + 62, 42 });
+        menu->addChild(easier);
+        m_mainLayer->addChild(menu);
+
+        refresh();
+        return true;
+    }
+
+    void refresh() {
+        if (m_lo >= m_hi) { finish(); return; }
+        int mid = (m_lo + m_hi) / 2;
+        std::string nm = m_ranked[mid].second;
+        if (nm.size() > 22) nm = nm.substr(0, 20) + "..";
+        m_vsName->setString(nm.c_str());
+    }
+    void onHarder(CCObject*) { m_hi = (m_lo + m_hi) / 2; refresh(); }
+    void onEasier(CCObject*) { m_lo = (m_lo + m_hi) / 2 + 1; refresh(); }
+
+    void finish() {
+        std::vector<std::string> order;
+        order.reserve(m_ranked.size() + 1);
+        for (int i = 0; i <= (int)m_ranked.size(); i++) {
+            if (i == m_lo) order.push_back(std::to_string(m_targetId));
+            if (i < (int)m_ranked.size()) order.push_back(std::to_string(m_ranked[i].first));
+        }
+        submitOrder(m_uid, std::move(order), m_lo + 1, (int)m_ranked.size() + 1);
+        this->onClose(nullptr);
+    }
+
+public:
+    static RankComparePopup* create(long long targetId, std::string const& targetName, int uid,
+                                    std::vector<std::pair<long long, std::string>> ranked) {
+        auto ret = new RankComparePopup();
+        if (ret->init(targetId, targetName, uid, std::move(ranked))) { ret->autorelease(); return ret; }
+        CC_SAFE_DELETE(ret);
+        return nullptr;
+    }
+};
+
+static void openRankFlow(GJGameLevel* level) {
+    if (!loggedIn()) {
+        Notification::create("List Sync: log in first (Sync button on the main menu)", NotificationIcon::Warning)->show();
+        return;
+    }
+    if (!level) return;
+    long long lid = level->m_levelID.value();
+    if (lid <= 0) {
+        Notification::create("List Sync: online levels only", NotificationIcon::Warning)->show();
+        return;
+    }
+    std::string name = level->m_levelName;
+    Notification::create("Loading your ranking...", NotificationIcon::Loading)->show();
+    std::string base = apiBase();
+    std::string token = g_token;
+
+    std::thread([base, token, lid, name]() {
+        auto auth = [&](web::WebRequest req) {
+            return std::move(req.certVerification(false)
+                .header("Authorization", "Bearer " + token)
+                .timeout(std::chrono::seconds(20)));
+        };
+        auto fail = [](std::string msg) {
+            Loader::get()->queueInMainThread([msg]() {
+                Notification::create(msg, NotificationIcon::Error)->show();
+            });
+        };
+
+        auto me = auth(web::WebRequest()).getSync(base + "/auth/me");
+        auto meJson = me.json().unwrapOr(matjson::Value());
+        int uid = me.code() == 200 && meJson.contains("user")
+            ? (int)meJson["user"]["id"].asInt().unwrapOr(0) : 0;
+        if (uid <= 0) { fail("List Sync: session expired, log in again"); return; }
+
+        // make sure the site knows the level (it upserts on fetch)
+        auto lv = auth(web::WebRequest()).getSync(base + "/levels/" + std::to_string(lid));
+        if (lv.code() != 200) { fail("List Sync: couldn't load the level on the site"); return; }
+
+        auto rk = auth(web::WebRequest()).getSync(base + "/users/" + std::to_string(uid) + "/difficulty");
+        auto rkJson = rk.json().unwrapOr(matjson::Value());
+        if (rk.code() != 200 || !rkJson.contains("ranked") || !rkJson["ranked"].isArray()) {
+            fail("List Sync: couldn't load your ranking");
+            return;
+        }
+        std::vector<std::pair<long long, std::string>> ranked;
+        int already = 0;
+        for (auto& r : rkJson["ranked"]) {
+            long long id = r["levelId"].asInt().unwrapOr(0);
+            if (id <= 0) continue;
+            if (id == lid) already = (int)ranked.size() + 1;
+            ranked.push_back({ id, r["name"].asString().unwrapOr("") });
+        }
+
+        Loader::get()->queueInMainThread([lid, name, uid, ranked, already]() {
+            if (already) {
+                Notification::create(
+                    fmt::format("Already #{} in your ranking", already),
+                    NotificationIcon::Warning)->show();
+                return;
+            }
+            if (ranked.empty()) {
+                submitOrder(uid, { std::to_string(lid) }, 1, 1);
+                return;
+            }
+            if (auto p = RankComparePopup::create(lid, name, uid, ranked)) p->show();
+        });
+    }).detach();
+}
+
+class $modify(LSLevelInfo, LevelInfoLayer) {
+    bool init(GJGameLevel* level, bool challenge) {
+        if (!LevelInfoLayer::init(level, challenge)) return false;
+
+        auto spr = CircleButtonSprite::createWithSpriteFrameName(
+            "GJ_starsIcon_001.png", 1.f, CircleBaseColor::Green, CircleBaseSize::Medium);
+        auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LSLevelInfo::onRank));
+        btn->setID("rank-button"_spr);
+
+        // slot into the left side column of circle buttons
+        if (auto menu = this->getChildByID("left-side-menu")) {
+            menu->addChild(btn);
+            menu->updateLayout();
+        } else {
+            auto own = CCMenu::create();
+            own->setID("list-sync-rank-menu"_spr);
+            own->addChild(btn);
+            own->setPosition({ 30.f, 130.f });
+            this->addChild(own);
+        }
+        return true;
+    }
+    void onRank(CCObject*) { openRankFlow(m_level); }
 };
 
 class $modify(LSSearchLayer, LevelSearchLayer) {
