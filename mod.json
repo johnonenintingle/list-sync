@@ -1,0 +1,29 @@
+{
+    "geode": "5.7.1",
+    "gd": {
+        "win": "2.2081"
+    },
+    "id": "john119.list-sync",
+    "name": "List Sync",
+    "version": "v1.1.0",
+    "developer": "john119",
+    "description": "Logs your GD completions to your Dynamic List account.",
+    "tags": ["online"],
+    "links": {
+        "source": "https://github.com/johnonenintingle/list-sync"
+    },
+    "settings": {
+        "api-base": {
+            "type": "string",
+            "name": "API base URL",
+            "description": "Dynamic List backend base URL (no trailing slash).",
+            "default": "https://backend-production-db1f.up.railway.app"
+        },
+        "auto-sync": {
+            "type": "bool",
+            "name": "Auto-sync completions",
+            "description": "When logged in, sync completions automatically in the background.",
+            "default": true
+        }
+    }
+}
