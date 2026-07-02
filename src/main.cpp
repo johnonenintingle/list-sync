@@ -438,11 +438,32 @@ class $modify(LSSearchLayer, LevelSearchLayer) {
     bool init(int type) {
         if (!LevelSearchLayer::init(type)) return false;
 
+        auto spr = ButtonSprite::create("Recommended");
+        spr->setScale(0.7f);
+        auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LSSearchLayer::onRecommended));
+        btn->setID("recommended-button"_spr);
+
+        // put it on the quick search tab, centered under the 2x4 grid, so it
+        // shows/hides with the tab like the other buttons
+        if (auto menu = this->getChildByID("quick-search-menu")) {
+            float minY = FLT_MAX, maxY = -FLT_MAX, sumX = 0.f;
+            int n = 0;
+            for (auto child : CCArrayExt<CCNode*>(menu->getChildren())) {
+                minY = std::min(minY, child->getPositionY());
+                maxY = std::max(maxY, child->getPositionY());
+                sumX += child->getPositionX();
+                n++;
+            }
+            if (n > 0) {
+                float rowGap = n > 2 ? (maxY - minY) / 3.f : 42.f;   // 4 rows
+                btn->setPosition({ sumX / n, minY - rowGap });
+                menu->addChild(btn);
+                return true;
+            }
+        }
+        // no ids? corner it is
         auto menu = CCMenu::create();
         menu->setID("list-sync-reco-menu"_spr);
-        auto spr = ButtonSprite::create("Recommended");
-        spr->setScale(0.55f);
-        auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LSSearchLayer::onRecommended));
         menu->addChild(btn);
         auto win = CCDirector::sharedDirector()->getWinSize();
         menu->setPosition({ win.width - 75.f, 22.f });
