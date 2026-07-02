@@ -1,10 +1,13 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/LevelSearchLayer.hpp>
 #include <Geode/binding/GJGameLevel.hpp>
 #include <Geode/binding/GameStatsManager.hpp>
 #include <Geode/binding/ButtonSprite.hpp>
 #include <Geode/binding/CCMenuItemSpriteExtra.hpp>
+#include <Geode/binding/GJSearchObject.hpp>
+#include <Geode/binding/LevelBrowserLayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/ui/Popup.hpp>
 #include <Geode/ui/Notification.hpp>
@@ -213,6 +216,54 @@ static void checkForUpdates() {
     }).detach();
 }
 
+// pulls your recommendation queue from the site (personalized when logged in,
+// levels youve already ranked are left out server side) and opens it as a
+// level list. type 10 search takes a comma separated id string, same thing
+// map packs use, so the browser does all the work
+static void openRecommended() {
+    if (!loggedIn()) {
+        Notification::create("List Sync: log in first (Sync button on the main menu)", NotificationIcon::Warning)->show();
+        return;
+    }
+    Notification::create("Loading recommendations...", NotificationIcon::Loading)->show();
+    std::string url = apiBase() + "/lists/suggestions?limit=50";
+    std::string token = g_token;
+
+    std::thread([url, token]() {
+        auto res = web::WebRequest()
+            .certVerification(false)
+            .header("Authorization", "Bearer " + token)
+            .timeout(std::chrono::seconds(20))
+            .getSync(url);
+        int code = res.code();
+        auto j = res.json().unwrapOr(matjson::Value());
+
+        Loader::get()->queueInMainThread([code, j]() {
+            if (code != 200 || !j.contains("levels") || !j["levels"].isArray()) {
+                Notification::create("List Sync: couldn't load recommendations", NotificationIcon::Error)->show();
+                return;
+            }
+            std::string ids;
+            int count = 0;
+            for (auto& l : j["levels"]) {
+                long long id = l["levelId"].asInt().unwrapOr(0);
+                if (id <= 0) continue;
+                if (!ids.empty()) ids += ",";
+                ids += std::to_string(id);
+                if (++count >= 50) break;
+            }
+            if (ids.empty()) {
+                Notification::create("List Sync: nothing to recommend right now", NotificationIcon::Warning)->show();
+                return;
+            }
+            auto search = GJSearchObject::create(SearchType::MapPackOnClick, ids);
+            auto scene = CCScene::create();
+            scene->addChild(LevelBrowserLayer::create(search));
+            CCDirector::sharedDirector()->pushScene(CCTransitionFade::create(0.5f, scene));
+        });
+    }).detach();
+}
+
 class ListSyncPopup : public geode::Popup {
 protected:
     TextInput* m_user = nullptr;
@@ -381,6 +432,24 @@ class $modify(LSMenuLayer, MenuLayer) {
     void onListSync(CCObject*) {
         if (auto p = ListSyncPopup::create()) p->show();
     }
+};
+
+class $modify(LSSearchLayer, LevelSearchLayer) {
+    bool init(int type) {
+        if (!LevelSearchLayer::init(type)) return false;
+
+        auto menu = CCMenu::create();
+        menu->setID("list-sync-reco-menu"_spr);
+        auto spr = ButtonSprite::create("Recommended");
+        spr->setScale(0.55f);
+        auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LSSearchLayer::onRecommended));
+        menu->addChild(btn);
+        auto win = CCDirector::sharedDirector()->getWinSize();
+        menu->setPosition({ win.width - 75.f, 22.f });
+        this->addChild(menu);
+        return true;
+    }
+    void onRecommended(CCObject*) { openRecommended(); }
 };
 
 $on_mod(Loaded) {

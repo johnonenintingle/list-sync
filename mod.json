@@ -5,7 +5,7 @@
     },
     "id": "john119.list-sync",
     "name": "List Sync",
-    "version": "v1.1.0",
+    "version": "v1.2.0",
     "developer": "john119",
     "description": "Logs your GD completions to your Dynamic List account.",
     "tags": ["online"],
