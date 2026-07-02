@@ -2,6 +2,7 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/LevelSearchLayer.hpp>
+#include <Geode/modify/LevelBrowserLayer.hpp>
 #include <Geode/modify/LevelInfoLayer.hpp>
 #include <Geode/ui/BasedButtonSprite.hpp>
 #include <Geode/binding/GJGameLevel.hpp>
@@ -222,7 +223,18 @@ static void checkForUpdates() {
 // levels youve already ranked are left out server side) and opens it as a
 // level list. type 10 search takes a comma separated id string, same thing
 // map packs use, so the browser does all the work
-static void openRecommended() {
+// the api serializes level ids as json STRINGS (postgres bigint), asInt alone
+// silently gives 0 for those. learned that one the hard way
+static long long jsonId(matjson::Value const& v) {
+    if (v.isString()) return std::atoll(v.asString().unwrapOr("0").c_str());
+    return v.asInt().unwrapOr(0);
+}
+
+// set right before we create OUR browser so the LevelBrowserLayer hook knows
+// this list is the pending placements (and gets the refresh button)
+static bool g_openPendingBrowser = false;
+
+static void openRecommended(bool replace = false) {
     if (!loggedIn()) {
         Notification::create("List Sync: log in first (Sync button on the main menu)", NotificationIcon::Warning)->show();
         return;
@@ -231,7 +243,7 @@ static void openRecommended() {
     std::string url = apiBase() + "/lists/suggestions?limit=50";
     std::string token = g_token;
 
-    std::thread([url, token]() {
+    std::thread([url, token, replace]() {
         auto res = web::WebRequest()
             .certVerification(false)
             .header("Authorization", "Bearer " + token)
@@ -240,7 +252,7 @@ static void openRecommended() {
         int code = res.code();
         auto j = res.json().unwrapOr(matjson::Value());
 
-        Loader::get()->queueInMainThread([code, j]() {
+        Loader::get()->queueInMainThread([code, j, replace]() {
             if (code != 200 || !j.contains("levels") || !j["levels"].isArray()) {
                 Notification::create("List Sync: couldn't load pending placements", NotificationIcon::Error)->show();
                 return;
@@ -248,7 +260,7 @@ static void openRecommended() {
             std::string ids;
             int count = 0;
             for (auto& l : j["levels"]) {
-                long long id = l["levelId"].asInt().unwrapOr(0);
+                long long id = jsonId(l["levelId"]);
                 if (id <= 0) continue;
                 if (!ids.empty()) ids += ",";
                 ids += std::to_string(id);
@@ -259,12 +271,40 @@ static void openRecommended() {
                 return;
             }
             auto search = GJSearchObject::create(SearchType::MapPackOnClick, ids);
+            g_openPendingBrowser = true;
+            auto browser = LevelBrowserLayer::create(search);
             auto scene = CCScene::create();
-            scene->addChild(LevelBrowserLayer::create(search));
-            CCDirector::sharedDirector()->pushScene(CCTransitionFade::create(0.5f, scene));
+            scene->addChild(browser);
+            if (replace) CCDirector::sharedDirector()->replaceScene(CCTransitionFade::create(0.5f, scene));
+            else CCDirector::sharedDirector()->pushScene(CCTransitionFade::create(0.5f, scene));
         });
     }).detach();
 }
+
+// refresh button (bottom right, like the recent tab has) on OUR browser only
+class $modify(LSBrowser, LevelBrowserLayer) {
+    struct Fields {
+        bool pending = false;
+    };
+    bool init(GJSearchObject* search) {
+        bool pending = g_openPendingBrowser;
+        g_openPendingBrowser = false;
+        if (!LevelBrowserLayer::init(search)) return false;
+        if (pending) {
+            m_fields->pending = true;
+            auto menu = CCMenu::create();
+            menu->setID("pending-refresh-menu"_spr);
+            auto spr = CCSprite::createWithSpriteFrameName("GJ_updateBtn_001.png");
+            auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LSBrowser::onPendingRefresh));
+            menu->addChild(btn);
+            auto win = CCDirector::sharedDirector()->getWinSize();
+            menu->setPosition({ win.width - 28.f, 28.f });
+            this->addChild(menu, 10);
+        }
+        return true;
+    }
+    void onPendingRefresh(CCObject*) { openRecommended(true); }
+};
 
 class ListSyncPopup : public geode::Popup {
 protected:
@@ -439,13 +479,6 @@ class $modify(LSMenuLayer, MenuLayer) {
 // ---- in game ranking via the sites binary compare ----
 // binary search over your existing difficulty ordering: "harder or easier than
 // the middle level", ~log2(n) taps, then the whole new order is PUT in one go
-
-// the api serializes level ids as json STRINGS (postgres bigint), asInt alone
-// silently gives 0 for those. learned that one the hard way
-static long long jsonId(matjson::Value const& v) {
-    if (v.isString()) return std::atoll(v.asString().unwrapOr("0").c_str());
-    return v.asInt().unwrapOr(0);
-}
 
 static void submitOrder(int uid, std::vector<std::string> order, int pos, int total) {
     std::string url = apiBase() + "/users/" + std::to_string(uid) + "/difficulty";
