@@ -227,7 +227,7 @@ static void openRecommended() {
         Notification::create("List Sync: log in first (Sync button on the main menu)", NotificationIcon::Warning)->show();
         return;
     }
-    Notification::create("Loading recommendations...", NotificationIcon::Loading)->show();
+    Notification::create("Loading pending placements...", NotificationIcon::Loading)->show();
     std::string url = apiBase() + "/lists/suggestions?limit=50";
     std::string token = g_token;
 
@@ -242,7 +242,7 @@ static void openRecommended() {
 
         Loader::get()->queueInMainThread([code, j]() {
             if (code != 200 || !j.contains("levels") || !j["levels"].isArray()) {
-                Notification::create("List Sync: couldn't load recommendations", NotificationIcon::Error)->show();
+                Notification::create("List Sync: couldn't load pending placements", NotificationIcon::Error)->show();
                 return;
             }
             std::string ids;
@@ -496,7 +496,7 @@ protected:
         auto size = m_mainLayer->getContentSize();
         float cx = size.width / 2;
 
-        auto q = CCLabelBMFont::create("harder or easier than", "bigFont.fnt");
+        auto q = CCLabelBMFont::create("easier or harder than", "bigFont.fnt");
         q->setScale(0.4f);
         q->setPosition({ cx, size.height - 52 });
         m_mainLayer->addChild(q);
@@ -508,14 +508,14 @@ protected:
 
         auto menu = CCMenu::create();
         menu->setPosition({ 0, 0 });
-        auto harder = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Harder"), this, menu_selector(RankComparePopup::onHarder));
-        harder->setPosition({ cx - 62, 42 });
-        menu->addChild(harder);
         auto easier = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Easier"), this, menu_selector(RankComparePopup::onEasier));
-        easier->setPosition({ cx + 62, 42 });
+        easier->setPosition({ cx - 62, 42 });
         menu->addChild(easier);
+        auto harder = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Harder"), this, menu_selector(RankComparePopup::onHarder));
+        harder->setPosition({ cx + 62, 42 });
+        menu->addChild(harder);
         m_mainLayer->addChild(menu);
 
         refresh();
@@ -659,7 +659,7 @@ class $modify(LSSearchLayer, LevelSearchLayer) {
     bool init(int type) {
         if (!LevelSearchLayer::init(type)) return false;
 
-        auto spr = ButtonSprite::create("Recommended");
+        auto spr = ButtonSprite::create("Pending Placements");
         spr->setScale(0.7f);
         auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(LSSearchLayer::onRecommended));
         btn->setID("recommended-button"_spr);
