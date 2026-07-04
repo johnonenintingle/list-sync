@@ -31,7 +31,9 @@ static std::unordered_set<int> g_handled; // stuff the server already knows abou
 static bool g_syncing = false;
 static bool g_enumerated = false;
 
-constexpr int CHUNK = 50;
+// the server just queues these now (it does the gating and marking on its own
+// time), so requests are cheap and chunks can be big
+constexpr int CHUNK = 500;
 
 static std::string apiBase() {
     auto b = Mod::get()->getSettingValue<std::string>("api-base");
@@ -144,7 +146,8 @@ static void syncNow() {
                     g_handled.insert(id);
                 }
             };
-            resolve("marked");
+            resolve("queued");   // new backend: server owns them from here
+            resolve("marked");   // older responses
             resolve("skipped");
             // dont retry stuff that failed for a real reason, only rate limits
             if (j.contains("errors") && j["errors"].isArray()) {
