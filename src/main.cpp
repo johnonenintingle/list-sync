@@ -33,7 +33,7 @@ static bool g_enumerated = false;
 
 // the server just queues these now (it does the gating and marking on its own
 // time), so requests are cheap and chunks can be big
-constexpr int CHUNK = 500;
+constexpr int CHUNK = 5000;
 
 static std::string apiBase() {
     auto b = Mod::get()->getSettingValue<std::string>("api-base");
