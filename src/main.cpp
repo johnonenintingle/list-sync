@@ -164,6 +164,10 @@ static void syncNow() {
 
             if (!g_pending.empty() && g_pending.size() < before) {
                 Loader::get()->queueInMainThread([]() { syncNow(); });
+            } else if (g_pending.empty() && before > 0) {
+                // tell one-time users its safe to quit (and even remove the
+                // mod) - the server owns everything from here
+                Notification::create("List Sync: everything is synced to the site", NotificationIcon::Success)->show();
             }
         });
     }).detach();
