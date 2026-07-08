@@ -1,11 +1,12 @@
 {
     "geode": "5.7.1",
     "gd": {
-        "win": "2.2081"
+        "win": "2.2081",
+        "android": "2.2081"
     },
     "id": "john119.list-sync",
     "name": "DLL GD Test",
-    "version": "v1.3.11",
+    "version": "v1.3.12",
     "developer": "john119",
     "description": "",
     "tags": [
