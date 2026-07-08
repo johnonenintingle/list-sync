@@ -169,6 +169,18 @@ static void syncNow() {
     }).detach();
 }
 
+// Forget what the server has already acknowledged and re-queue every completion
+// from the save, so the server sees them all again. Needed when a level was
+// rejected before (e.g. too hard while you weren't trusted yet) and later would
+// be accepted: normal sync skips anything in g_handled, so it never retries.
+static void resyncEverything() {
+    g_handled.clear();
+    g_pending.clear();
+    g_enumerated = false;   // let enumerateHistorical run again
+    saveSets();
+    enumerateAndSync();
+}
+
 // self updater - checks the repo for a newer release and drops the .geode
 // into the mods folder, geode picks it up next launch
 static void checkForUpdates() {
@@ -361,11 +373,15 @@ protected:
             menu->setPosition({ 0, 0 });
             auto sync = CCMenuItemSpriteExtra::create(
                 ButtonSprite::create("Sync now"), this, menu_selector(ListSyncPopup::onSync));
-            sync->setPosition({ cx, size.height - 118 });
+            sync->setPosition({ cx, size.height - 112 });
             menu->addChild(sync);
+            auto resync = CCMenuItemSpriteExtra::create(
+                ButtonSprite::create("Re-sync all"), this, menu_selector(ListSyncPopup::onResync));
+            resync->setPosition({ cx, size.height - 150 });
+            menu->addChild(resync);
             auto out = CCMenuItemSpriteExtra::create(
                 ButtonSprite::create("Log out"), this, menu_selector(ListSyncPopup::onLogout));
-            out->setPosition({ cx, size.height - 158 });
+            out->setPosition({ cx, size.height - 188 });
             menu->addChild(out);
             m_mainLayer->addChild(menu);
         }
@@ -418,6 +434,20 @@ protected:
     void onSync(CCObject*) {
         Notification::create("Syncing...", NotificationIcon::Loading)->show();
         enumerateAndSync();
+        this->onClose(nullptr);
+    }
+    void onResync(CCObject*) {
+        geode::createQuickPopup(
+            "Re-sync everything",
+            "This re-sends <cy>every</c> completion to the server, even ones it already has. "
+            "Use it if completions are missing, for example after being granted trusted. Continue?",
+            "Cancel", "Re-sync",
+            [](FLAlertLayer*, bool confirm) {
+                if (!confirm) return;
+                resyncEverything();
+                Notification::create("Re-syncing all completions...", NotificationIcon::Loading)->show();
+            }
+        );
         this->onClose(nullptr);
     }
     void onLogout(CCObject*) {
