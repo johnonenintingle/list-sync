@@ -7,6 +7,7 @@
 #include <Geode/ui/BasedButtonSprite.hpp>
 #include <Geode/binding/GJGameLevel.hpp>
 #include <Geode/binding/GameStatsManager.hpp>
+#include <Geode/binding/GJAccountManager.hpp>
 #include <Geode/binding/ButtonSprite.hpp>
 #include <Geode/binding/CCMenuItemSpriteExtra.hpp>
 #include <Geode/binding/GJSearchObject.hpp>
@@ -30,6 +31,7 @@ static std::unordered_set<int> g_pending; // beaten levels we havent sent yet
 static std::unordered_set<int> g_handled; // stuff the server already knows about
 static bool g_syncing = false;
 static bool g_enumerated = false;
+static int g_reportedAccount = 0; // GD account id we've already linked this session
 
 // the server just queues these now (it does the gating and marking on its own
 // time), so requests are cheap and chunks can be big
@@ -66,6 +68,7 @@ static void setToken(std::string const& t, std::string const& u) {
 }
 static void clearToken() {
     g_token = "";
+    g_reportedAccount = 0;   // so a re-login re-reports the GD account
     Mod::get()->setSavedValue<std::string>("token", std::string(""));
 }
 
@@ -93,8 +96,41 @@ static void enumerateHistorical() {
     if (added) { saveSets(); log::info("queued {} past completions", added); }
 }
 
+// Report the logged-in GD account to the site so it can link creator pages and
+// pull real GD stats. The site canonicalizes the id against GDBrowser, so we
+// only send the account id the game already knows. Fire-and-forget, once per
+// account per session (reset on logout / re-tried on failure).
+static void reportGdIdentity() {
+    if (!loggedIn()) return;
+    auto am = GJAccountManager::sharedState();
+    if (!am) return;
+    int accountId = am->m_accountID;
+    if (accountId <= 0 || accountId == g_reportedAccount) return;   // not logged into GD, or already done
+    g_reportedAccount = accountId;   // optimistic; reset below if it fails
+    std::string username = am->m_username;
+    std::string token = g_token;
+    std::string url = apiBase() + "/users/gd-link";
+    matjson::Value body = matjson::makeObject({ {"accountId", accountId}, {"username", username} });
+
+    std::thread([body, token, url, accountId]() {
+        auto res = web::WebRequest()
+            .certVerification(false)
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + token)
+            .bodyJSON(body)
+            .timeout(std::chrono::seconds(20))
+            .postSync(url);
+        if (res.code() != 200) {
+            Loader::get()->queueInMainThread([accountId]() {
+                if (g_reportedAccount == accountId) g_reportedAccount = 0;   // let it retry next sync
+            });
+        }
+    }).detach();
+}
+
 static void enumerateAndSync() {
     if (!g_enumerated) { g_enumerated = true; enumerateHistorical(); }
+    reportGdIdentity();
     syncNow();
 }
 
