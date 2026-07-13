@@ -509,6 +509,18 @@ class $modify(LSPlayLayer, PlayLayer) {
         if (m_isPracticeMode || m_isTestMode) return;
         int id = lvl->m_levelID.value();
         if (id <= 0) return;
+        // Only sync completions the GAME actually recorded. Every Safe Mode
+        // (Eclipse / Mega Hack / QOLMod / ...) suppresses the completion - it forces
+        // test mode or skips the save - so a cheated clear never enters the save's
+        // completed set. Gating on that set is mod-agnostic AND immune to hook order:
+        // the m_isTestMode check above misses Safe Mode when OUR hook runs outermost
+        // (Safe Mode restores the flag before we read it) or when a menu suppresses
+        // the completion without using test mode at all. hasCompletedOnlineLevel is
+        // the same source of truth enumerateHistorical uses, so the live and
+        // historical paths agree; a completion not yet recorded is picked up later
+        // from the save on the next enumerate.
+        auto gsm = GameStatsManager::get();
+        if (!gsm || !gsm->hasCompletedOnlineLevel(id)) return;
         if (enqueue(id)) {
             saveSets();
             if (loggedIn() && autoSync()) syncNow();
